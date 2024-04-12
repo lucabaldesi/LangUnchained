@@ -3,6 +3,80 @@
 import os
 
 
+class CompletionRecord(object):
+    def __init__(self, role, content):
+        self.role = role
+        self.content = content
+
+    def from_llama2(chat_completion):
+        print(len(chat_completion))
+        answer = chat_completion[-1]['generation']
+        return CompletionRecord(answer['role'], answer['content'])
+
+    def from_openai(chat_completion):
+        print(len(chat_completion.choices))
+        answer = chat_completion.choices[0].message
+        return CompletionRecord(answer.role, answer.content)
+
+    def __str__(self):
+        return f"[{self.role.upper()}] - {self.content}"
+
+    def to_dict(self):
+        return {"role": self.role, "content": self.content}
+
+
+class Llama2Model(object):
+    def __init__(self, stop="\n\n"):
+        from llama import Llama
+        self.model = Llama.build(
+            ckpt_dir="../llama-2-7b-chat/",
+            tokenizer_path="../tokenizer.model",
+            max_seq_len=512,
+            max_batch_size=6,
+        )
+        self.temperature = 0.6
+        self.top_p = 0.9
+        self.max_gen_len = None
+        self.stop = stop
+        self.prompts = []
+
+    def _trim_message(self, message):
+        content = message.content.split(self.stop)
+        message.content = content[0]
+        return message
+
+    def generate(self, user_string):
+        self.prompts.append(
+            {
+                "role": "user",
+                "content": user_string,
+            }
+        )
+        dialogs: List[Dialog] = [self.prompts]
+        chat_completion = self.model.chat_completion(
+            dialogs,  # type: ignore
+            max_gen_len=self.max_gen_len,
+            temperature=self.temperature,
+            top_p=self.top_p,
+        )
+        message = CompletionRecord.from_llama2(chat_completion)
+        message = self._trim_message(message)
+        print(message)
+        self.prompts.append(message.to_dict())
+        return message
+
+    def add_system_prompt(self, prompt):
+        self.prompts.append(
+            {
+                "role": "system",
+                "content": prompt,
+            }
+        )
+
+    def clear_history(self):
+        self.prompts = []
+
+
 class OpenAIModel(object):
 
     def __init__(self, stop="\n\n"):
@@ -23,11 +97,10 @@ class OpenAIModel(object):
             stop=self.stop,
             messages=self.prompts
         )
-        print(len(chat_completion.choices))
-        answer = chat_completion.choices[0].message
-        self.prompts.append(answer)
-        print(answer.content)
-        return answer
+        message = CompletionRecord.from_openai(chat_completion)
+        print(message)
+        self.prompts.append(message.to_dict())
+        return message
 
     def add_system_prompt(self, prompt):
         self.prompts.append(
@@ -62,12 +135,19 @@ class CalculatorTool(object):
             '''
 
     def operate(self, input_str):
-        return str(eval(input_str))
+        import re
+        pattern = r"[^0-9+\-*/().\s]"
+        inp = re.sub(pattern,"", input_str)
+        if len(inp):
+            val = eval(inp, {'__builtins__':None})
+            return str(val)
+        else:
+            return "Error"
 
 
 class Agent(object):
     def __init__(self):
-        self.model = OpenAIModel(stop='Observation:')
+        self.model = Llama2Model(stop='Observation:')
         self.tools = {'calculator': CalculatorTool(), 'search': SearchTool()}
 
     def get_agent_prompt(self, question):
@@ -100,6 +180,7 @@ class Agent(object):
         action = None
         action_input = None
         for line in res.content.split("\n"):
+            line = line.strip()
             if line.startswith("Action: "):
                 action = " ".join(line.split(" ")[1:])
             if line.startswith("Action Input: "):
