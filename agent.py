@@ -45,10 +45,10 @@ class Llama2Model(object):
         message.content = content[0]
         return message
 
-    def generate(self, user_string):
+    def generate(self, user_string, role="user"):
         self.prompts.append(
             {
-                "role": "user",
+                "role": role,
                 "content": user_string,
             }
         )
@@ -85,10 +85,10 @@ class OpenAIModel(object):
         self.prompts = []
         self.stop = stop
 
-    def generate(self, user_string):
+    def generate(self, user_string, role="user"):
         self.prompts.append(
             {
-                "role": "user",
+                "role": role,
                 "content": user_string,
             }
         )
@@ -116,30 +116,22 @@ class OpenAIModel(object):
 
 class SearchTool(object):
     def __init__(self):
-        self.description = '''
-            a search engine. useful for when you need to answer questions about current
-            events. input should be a search query.
-            '''
+        self.description = "a search engine. useful for when you need to answer questions about current events. input should be a search query."
 
     def operate(self, input_str):
-        return "Newcastle Temperature Yesterday. Maximum temperature yesterday:\
-             56 °F (at 6:00 pm) Minimum temperature yesterday: 46 °F"
+        return "Newcastle Temperature Yesterday. Maximum temperature yesterday: 56 °F (at 6:00 pm) Minimum temperature yesterday: 46 °F"
 
 
 class CalculatorTool(object):
     def __init__(self):
-        self.description = '''
-            useful for getting the result of a math expression. The input to this
-            tool should be a valid mathematical expression that could be executed
-            by a simple calculator.
-            '''
+        self.description = "useful for getting the result of a math expression. The input to this tool should be a valid mathematical expression that could be executed by a simple calculator."
 
     def operate(self, input_str):
         import re
         pattern = r"[^0-9+\-*/().\s]"
-        inp = re.sub(pattern,"", input_str)
+        inp = re.sub(pattern, "", input_str)
         if len(inp):
-            val = eval(inp, {'__builtins__':None})
+            val = eval(inp, {'__builtins__': None})
             return str(val)
         else:
             return "Error"
@@ -147,30 +139,37 @@ class CalculatorTool(object):
 
 class Agent(object):
     def __init__(self):
-        self.model = Llama2Model(stop='Observation:')
+        self.model = OpenAIModel(stop='Observation:')
         self.tools = {'calculator': CalculatorTool(), 'search': SearchTool()}
 
     def get_agent_prompt(self, question):
-        agent_prompt = '''
-            Answer the following questions as best you can. You have access to the following tools:
-            '''
+        first_tool = True
+
+        agent_prompt = "Answer the following questions as best you can. You have access to the following tools:\n"
+        agent_prompt += "\n"
         for tool_name, tool in self.tools.items():
-            agent_prompt += tool_name + ": " + tool.description
+            agent_prompt += tool_name + ": " + tool.description + "\n"
+        agent_prompt += "\n"
 
-        agent_prompt += '''
-            Use the following format:
-
-            Question: the input question you must answer
-            Thought: you should always think about what to do
-            Action: the action to take, should be one of [search, calculator]
-            Action Input: the input to the action
-            Observation: the result of the action
-            ... (this Thought/Action/Action Input/Observation can repeat N times)
-            Thought: I now know the final answer
-            Final Answer: the final answer to the original input question
-
-            Begin!
-            '''
+        agent_prompt += "Use the following format:\n"
+        agent_prompt += "\n"
+        agent_prompt += "Question: the input question you must answer\n"
+        agent_prompt += "Thought: you should always think about what to do\n"
+        agent_prompt += "Action: the action to take, should be one of ["
+        for tool_name, tool in self.tools.items():
+            if not first_tool:
+                agent_prompt += ", "
+            agent_prompt += tool_name
+            first_tool = False
+        agent_prompt += "]\n"
+        agent_prompt += "Action Input: the input to the action\n"
+        agent_prompt += "Observation: the result of the action\n"
+        agent_prompt += "... (this Thought/Action/Action Input/Observation can repeat N times)\n"
+        agent_prompt += "Thought: I now know the final answer\n"
+        agent_prompt += "Final Answer: the final answer to the original input question\n"
+        agent_prompt += "\n"
+        agent_prompt += "Begin!\n"
+        agent_prompt += "\n"
         agent_prompt += "Question: " + question + "\n"
         agent_prompt += "Thought: "
 
@@ -199,7 +198,7 @@ class Agent(object):
             else:
                 observation = "Observation: error in reasoning"
             print(observation)
-            res = self.model.generate(observation)
+            res = self.model.generate(observation, role="assistant")
             action, action_input = self.get_action_from_answer(res)
         return res
 
